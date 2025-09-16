@@ -8,14 +8,14 @@ pipeline {
     stages {
         stage('Deploy Blue') {
             steps {
-                bat 'kubectl apply -f deployment-blue.yaml'
-                bat 'kubectl apply -f service.yaml'
+                sh 'kubectl apply -f deployment-blue.yaml'
+                sh 'kubectl apply -f service.yaml'
             }
         }
 
         stage('Deploy Green') {
             steps {
-                bat 'kubectl apply -f deployment-green.yaml'
+                sh 'kubectl apply -f deployment-green.yaml'
             }
         }
 
@@ -23,21 +23,21 @@ pipeline {
             steps {
                 // Example: Port-forward and test
                 // Replace with curl tests, integration tests, etc.
-                bat 'kubectl port-forward deployment/myapp-green 8080:80 & sleep 10'
-                bat 'curl -f http://localhost:8080'
+                sh 'kubectl port-forward deployment/myapp-green 8080:80 & sleep 10'
+                sh 'curl -f http://localhost:8080'
             }
         }
 
         stage('Switch Traffic to Green') {
             steps {
-                bat '''kubectl patch service myapp-service \
+                sh '''kubectl patch service myapp-service \
                     -p '{"spec":{"selector":{"app":"myapp","version":"green"}}}' '''
             }
         }
 
         stage('Verify Switch') {
             steps {
-                bat 'kubectl get svc myapp-service -o yaml'
+                sh 'kubectl get svc myapp-service -o yaml'
             }
         }
 
@@ -46,7 +46,7 @@ pipeline {
                 expression { return params.CLEANUP_BLUE == true }
             }
             steps {
-                bat 'kubectl delete deployment myapp-blue || true'
+                sh 'kubectl delete deployment myapp-blue || true'
             }
         }
     }
