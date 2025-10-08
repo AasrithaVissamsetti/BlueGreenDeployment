@@ -1,64 +1,51 @@
-name: Local Blue-Green CI/CD
-
-on:
-  push:
-    branches: [ main ]
-
-env:
-  APP_NAME: myapp
-  K8S_NAMESPACE: default
-
-jobs:
-  build:
-    runs-on: ubuntu-latest
-    outputs:
-      image: ${{ steps.set-image.outputs.image }}
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Build Docker image
-        run: |
-          docker build -t myapp:${{ github.sha }} .
-
-      - name: Save image output
-        id: set-image
-        run: echo "image=myapp:${{ github.sha }}" >> $GITHUB_OUTPUT
-
   deploy:
     needs: build
     runs-on: self-hosted
     steps:
-      - name: Checkout
+      - name: Checkout code
         uses: actions/checkout@v4
+
+      # ✅ Add this step to fix the PSSecurityException
+      - name: Allow PowerShell scripts to run
+        shell: powershell
+        run: |
+          Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope Process -Force
+          Write-Host "Execution policy set to RemoteSigned for this session"
 
       - name: Determine current color
         id: current
+        shell: powershell
         run: |
-          CUR=$(kubectl get svc myapp -o jsonpath='{.spec.selector.color}' 2>$null)
-          if [ -z "$CUR" ]; then CUR=none; fi
-          echo "current=$CUR" >> $GITHUB_OUTPUT
+          $CUR = kubectl get svc myapp -o jsonpath='{.spec.selector.color}' -ErrorAction SilentlyContinue
+          if ([string]::IsNullOrEmpty($CUR)) { $CUR = "none" }
+          Write-Output "Current color: $CUR"
+          echo "current=$CUR" >> $env:GITHUB_OUTPUT
 
       - name: Compute target color
         id: target
+        shell: powershell
         run: |
-          CUR="${{ steps.current.outputs.current }}"
-          if [ "$CUR" = "blue" ]; then TARGET=green; else TARGET=blue; fi
-          echo "target=$TARGET" >> $GITHUB_OUTPUT
+          $CUR = "${{ steps.current.outputs.current }}"
+          if ($CUR -eq "blue") { $TARGET = "green" } else { $TARGET = "blue" }
+          Write-Output "Target color: $TARGET"
+          echo "target=$TARGET" >> $env:GITHUB_OUTPUT
 
       - name: Apply deployment
+        shell: powershell
         run: |
-          TARGET="${{ steps.target.outputs.target }}"
-          kubectl apply -f deployment-${TARGET}.yaml
-          kubectl rollout status deployment/myapp-${TARGET} --timeout=180s
+          $TARGET = "${{ steps.target.outputs.target }}"
+          kubectl apply -f deployment-$TARGET.yaml
+          kubectl rollout status deployment/myapp-$TARGET --timeout=180s
 
       - name: Smoke test
+        shell: powershell
         run: |
-          TARGET="${{ steps.target.outputs.target }}"
-          POD=$(kubectl get pods -l app=myapp,color=$TARGET -o jsonpath='{.items[0].metadata.name}')
+          $TARGET = "${{ steps.target.outputs.target }}"
+          $POD = kubectl get pods -l app=myapp,color=$TARGET -o jsonpath='{.items[0].metadata.name}'
           kubectl exec $POD -- curl -fsS http://localhost/health
 
       - name: Switch service selector
+        shell: powershell
         run: |
-          TARGET="${{ steps.target.outputs.target }}"
-          kubectl patch svc myapp -p "{\"spec\":{\"selector\":{\"app\":\"myapp\",\"color\":\"${TARGET}\"}}}"
+          $TARGET = "${{ steps.target.outputs.target }}"
+          kubectl patch svc myapp -p "{\"spec\":{\"selector\":{\"app\":\"myapp\",\"color\":\"$TARGET\"}}}"
