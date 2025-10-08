@@ -1,0 +1,64 @@
+name: Local Blue-Green CI/CD
+
+on:
+  push:
+    branches: [ main ]
+
+env:
+  APP_NAME: myapp
+  K8S_NAMESPACE: default
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    outputs:
+      image: ${{ steps.set-image.outputs.image }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Build Docker image
+        run: |
+          docker build -t myapp:${{ github.sha }} .
+
+      - name: Save image output
+        id: set-image
+        run: echo "image=myapp:${{ github.sha }}" >> $GITHUB_OUTPUT
+
+  deploy:
+    needs: build
+    runs-on: self-hosted
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Determine current color
+        id: current
+        run: |
+          CUR=$(kubectl get svc myapp -o jsonpath='{.spec.selector.color}' 2>$null)
+          if [ -z "$CUR" ]; then CUR=none; fi
+          echo "current=$CUR" >> $GITHUB_OUTPUT
+
+      - name: Compute target color
+        id: target
+        run: |
+          CUR="${{ steps.current.outputs.current }}"
+          if [ "$CUR" = "blue" ]; then TARGET=green; else TARGET=blue; fi
+          echo "target=$TARGET" >> $GITHUB_OUTPUT
+
+      - name: Apply deployment
+        run: |
+          TARGET="${{ steps.target.outputs.target }}"
+          kubectl apply -f deployment-${TARGET}.yaml
+          kubectl rollout status deployment/myapp-${TARGET} --timeout=180s
+
+      - name: Smoke test
+        run: |
+          TARGET="${{ steps.target.outputs.target }}"
+          POD=$(kubectl get pods -l app=myapp,color=$TARGET -o jsonpath='{.items[0].metadata.name}')
+          kubectl exec $POD -- curl -fsS http://localhost/health
+
+      - name: Switch service selector
+        run: |
+          TARGET="${{ steps.target.outputs.target }}"
+          kubectl patch svc myapp -p "{\"spec\":{\"selector\":{\"app\":\"myapp\",\"color\":\"${TARGET}\"}}}"
